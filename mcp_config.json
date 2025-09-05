@@ -1,0 +1,28 @@
+{
+  "servers": [
+    {
+      "name": "filesystem",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/home/smaug/Documents/REDES/P1-Private"
+      ],
+      "description": "File system operations server",
+      "env": {
+      }
+    },
+    {
+      "name": "Git",
+      "command": "uvx",
+      "args": [
+        "mcp-server-git",
+        "--repository", 
+        "./"
+      ],
+      "description": "File system operations server",
+      "env": {
+      }
+    }
+  ]
+}

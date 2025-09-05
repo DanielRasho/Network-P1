@@ -1,0 +1,45 @@
+[project]
+name = "claude-chatbot"
+version = "0.1.0"
+description = "Claude Terminal Chatbot with MCP Integration using official SDKs"
+readme = "README.md"
+authors = [
+    {name = "Your Name", email = "your.email@example.com"}
+]
+requires-python = ">=3.10"
+dependencies = [
+    "anthropic>=0.40.0",
+    "rich>=13.0.0",
+    "mcp>=1.0.0",
+    "python-dotenv>=1.0.0"
+]
+
+[project.scripts]
+claude-chatbot = "client:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "black>=22.0.0",
+    "ruff>=0.1.0"
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+include = [
+    "client.py",
+    "README.md",
+    "requirements.txt"
+]
+
+[tool.uv]
+dev-dependencies = []
+
+[tool.ruff]
+line-length = 100
+
+[tool.black]
+line-length = 100
