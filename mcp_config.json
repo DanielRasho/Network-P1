@@ -41,9 +41,23 @@
       }
     },
     {
-      "name": "Weather",
+      "name": "Youtube",
+      "transport": "stdio",
+      "command": "/usr/bin/uv",
+      "args": [
+        "--directory",
+        "/home/smaug/Documents/REDES/mcp/Gerax", 
+        "run",
+        "Server.py"
+      ],
+      "description": "Youtube comment analisis",
+      "env": {
+      }
+    },
+    {
+      "name": "NixPackages",
       "transport": "sse",
-      "url": "http://localhost:8000/mcp"
+      "url": "http://127.0.0.1:8080/mcp"
     }
   ]
 }
