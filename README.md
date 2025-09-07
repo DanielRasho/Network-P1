@@ -77,3 +77,9 @@ The server expose a single tool `city_weather` which receives a city name an ret
 
 ## Working Demo 🎥
 
+A full demostration is available here, **feel free to jump around the chapters**: 
+
+**https://youtu.be/-wRqb2aPWsc**
+
+Chech the report here:
+

@@ -58,6 +58,11 @@
       "name": "NixPackages",
       "transport": "sse",
       "url": "http://127.0.0.1:8080/mcp"
+    },
+    {
+      "name": "WeatherMCP",
+      "transport": "sse",
+      "url": "http://34.224.213.28:5309/mcp"
     }
   ]
 }
