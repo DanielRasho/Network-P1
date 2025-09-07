@@ -5,6 +5,10 @@
     </h3>
 </div>
 
+## Local MCP
+
+https://github.com/DanielRasho/GRAPH-CP 
+
 ## Client 🛜
 
 ### Requirements
