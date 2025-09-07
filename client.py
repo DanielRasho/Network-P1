@@ -20,6 +20,7 @@ except ImportError:
 try:
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
+    from mcp.client.streamable_http import streamablehttp_client
     from mcp.types import Tool
 except ImportError:
     print("Please install the MCP library: uv add mcp")
@@ -81,49 +82,91 @@ class MCPManager:
         """Start all configured MCP servers using official SDK"""
         for server_config in self.servers_config:
             try:
-                # Build command and arguments
-                args = [server_config.command]
-                if server_config.args:
-                    args.extend(server_config.args)
-                
-                # Set up environment
-                env = os.environ.copy()
-                if server_config.env:
-                    env.update(server_config.env)
-                
-                # Create server parameters
-                server_params = StdioServerParameters(
-                    command=server_config.command,
-                    args=server_config.args or [],
-                    env=env
-                )
-                
-                # Connect using official MCP client
-                stdio_transport = await self.exit_stack.enter_async_context(
-                    stdio_client(server_params)
-                )
-                
-                # Create session
-                session = await self.exit_stack.enter_async_context(
-                    ClientSession(*stdio_transport)
-                )
-                
-                # Initialize the session
-                await session.initialize()
-                
-                # Store the session
-                self.sessions[server_config.name] = session
-                
-                # Get available tools using official SDK
-                tools_response = await session.list_tools()
-                self.available_tools[server_config.name] = tools_response.tools
-                
-                logger.info(f"Connected to MCP server '{server_config.name}' with {len(tools_response.tools)} tools")
-                for tool in tools_response.tools:
-                    logger.info(f"  - {tool.name}: {tool.description}")
-                
+                if server_config.transport == "stdio":
+                    await self._start_stdio_server(server_config)
+                elif server_config.transport == "sse":
+                    await self._start_sse_server(server_config)
+                else:
+                    logger.error(f"Unsupported transport type '{server_config.transport}' for server '{server_config.name}'")
+                    continue
+                    
             except Exception as e:
                 logger.error(f"Failed to start MCP server '{server_config.name}': {e}")
+    
+    async def _start_stdio_server(self, server_config: MCPServerConfig):
+        """Start a stdio-based MCP server"""
+        if not server_config.command:
+            raise ValueError(f"Command is required for stdio transport in server '{server_config.name}'")
+        
+        # Build command and arguments
+        args = [server_config.command]
+        if server_config.args:
+            args.extend(server_config.args)
+        
+        # Set up environment
+        env = os.environ.copy()
+        if server_config.env:
+            env.update(server_config.env)
+        
+        # Create server parameters
+        server_params = StdioServerParameters(
+            command=server_config.command,
+            args=server_config.args or [],
+            env=env
+        )
+        
+        # Connect using official MCP client
+        stdio_transport = await self.exit_stack.enter_async_context(
+            stdio_client(server_params)
+        )
+        
+        # Create session
+        session = await self.exit_stack.enter_async_context(
+            ClientSession(*stdio_transport)
+        )
+        
+        # Initialize the session
+        await session.initialize()
+        
+        # Store the session
+        self.sessions[server_config.name] = session
+        
+        # Get available tools using official SDK
+        tools_response = await session.list_tools()
+        self.available_tools[server_config.name] = tools_response.tools
+        
+        logger.info(f"Connected to stdio MCP server '{server_config.name}' with {len(tools_response.tools)} tools")
+        for tool in tools_response.tools:
+            logger.info(f"  - {tool.name}: {tool.description}")
+    
+    async def _start_sse_server(self, server_config: MCPServerConfig):
+        """Start an SSE (Server-Sent Events) HTTP-based MCP server"""
+        if not server_config.url:
+            raise ValueError(f"URL is required for sse transport in server '{server_config.name}'")
+        
+        # Connect using streamable HTTP client
+        read_stream, write_stream, _ = await self.exit_stack.enter_async_context(
+            streamablehttp_client(server_config.url)
+        )
+        
+        # Create session
+        session = await self.exit_stack.enter_async_context(
+            ClientSession(read_stream, write_stream)
+        )
+        
+        # Initialize the session
+        await session.initialize()
+        
+        # Store the session
+        self.sessions[server_config.name] = session
+        
+        # Get available tools using official SDK
+        tools_response = await session.list_tools()
+        self.available_tools[server_config.name] = tools_response.tools
+        
+        logger.info(f"Connected to SSE MCP server '{server_config.name}' at {server_config.url} with {len(tools_response.tools)} tools")
+        for tool in tools_response.tools:
+            logger.info(f"  - {tool.name}: {tool.description}")
     
     async def call_tool(self, server_name: str, tool_name: str, arguments: Dict[str, Any]) -> Any:
         """Call a tool using official MCP SDK"""
