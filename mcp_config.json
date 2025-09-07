@@ -23,6 +23,19 @@
       "description": "File system operations server",
       "env": {
       }
+    },
+    {
+      "name": "GraphCP",
+      "command": "/usr/bin/uv",
+      "args": [
+        "--directory",
+        "/home/smaug/Documents/REDES/p1-public", 
+        "run",
+        "server.py"
+      ],
+      "description": "Graph example",
+      "env": {
+      }
     }
   ]
 }
