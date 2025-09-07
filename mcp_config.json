@@ -39,6 +39,11 @@
       "description": "Graph example",
       "env": {
       }
+    },
+    {
+      "name": "Weather",
+      "transport": "sse",
+      "url": "http://localhost:8000/mcp"
     }
   ]
 }
