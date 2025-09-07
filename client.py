@@ -306,18 +306,15 @@ class ClaudeChatbot:
         self.conversation_history.append(user_msg)
         
         try:
-            # Prepare messages and tools for API
             messages = self._prepare_messages_for_api()
             tools = self.mcp_manager.get_all_tools_for_anthropic()
             
             assistant_content = ""
             all_tool_calls = []
             
-            # Continue making API calls until we get a final response without tool calls
             current_messages = messages
             
             while True:
-                # Make streaming API call
                 kwargs = {
                     "model": MODEL,
                     "max_tokens": MAX_TOKENS,
@@ -327,7 +324,6 @@ class ClaudeChatbot:
                 if tools:
                     kwargs["tools"] = tools
                 
-                current_response_content = ""
                 current_tool_calls = []
                 
                 async with self.client.messages.stream(**kwargs) as stream:
@@ -335,7 +331,6 @@ class ClaudeChatbot:
                         if chunk.type == "content_block_delta":
                             if chunk.delta.type == "text_delta":
                                 text_chunk = chunk.delta.text
-                                current_response_content += text_chunk
                                 assistant_content += text_chunk
                                 yield text_chunk
                         elif chunk.type == "content_block_start":
@@ -346,7 +341,6 @@ class ClaudeChatbot:
                                     "input": chunk.content_block.input
                                 })
                     
-                    # Get final message from this stream
                     final_message = await stream.get_final_message()
                 
                 # If no tool calls, we're done
@@ -361,13 +355,11 @@ class ClaudeChatbot:
                     tool_results = await self._handle_tool_calls(final_message)
                     
                     if tool_results:
-                        # Add the assistant's message with tool calls to the conversation
                         current_messages.append({
                             "role": "assistant", 
                             "content": final_message.content
                         })
                         
-                        # Add the tool results as a user message
                         current_messages.append({
                             "role": "user", 
                             "content": tool_results
@@ -376,13 +368,10 @@ class ClaudeChatbot:
                         # Continue the loop to get Claude's response to the tool results
                         continue
                     else:
-                        # No tool results, break the loop
                         break
                 else:
-                    # No tool calls found but stop reason was tool_use, something went wrong
                     break
             
-            # Add final assistant message to history
             assistant_msg = ChatMessage(
                 role="assistant",
                 content=assistant_content,
@@ -391,7 +380,6 @@ class ClaudeChatbot:
             )
             self.conversation_history.append(assistant_msg)
             
-            # Save session
             await self.save_session()
             
         except RateLimitError as e:
@@ -467,7 +455,6 @@ async def main():
     console.print("  [cyan]/quit[/cyan]     - Exit the chatbot")
     console.print("  [cyan]/stats[/cyan]    - Show conversation statistics")
     
-    # Initialize chatbot
     chatbot = ClaudeChatbot(
         api_key=config["api_key"],
         mcp_servers=config["mcp_servers"],
@@ -490,7 +477,6 @@ async def main():
         
         console.print("\n[green]Ready! Type your message and press Enter. Use /quit to exit.[/green]\n")
         
-        # Main chat loop
         while True:
             try:
                 user_input = console.input("[bold green]You:[/bold green] ").strip()
@@ -498,7 +484,6 @@ async def main():
                 if not user_input:
                     continue
                 
-                # Handle commands
                 if user_input.startswith('/'):
                     command = user_input.lower()
                     
@@ -578,14 +563,13 @@ async def main():
                         console.print(f"[red]Unknown command: {user_input}[/red]")
                         continue
                 
-                # Send message to Claude with streaming
                 console.print("[bold blue]Claude:[/bold blue] ", end="")
                 
                 async for chunk in chatbot.send_message_stream(user_input):
                     console.print(chunk, end="", highlight=False)
                 
-                console.print()  # New line after response
-                console.print()  # Extra spacing
+                console.print()
+                console.print()
                 
             except KeyboardInterrupt:
                 console.print("\n\n[yellow]👋 Goodbye![/yellow]")
