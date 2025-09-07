@@ -46,13 +46,18 @@ except ImportError:
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+MODEL = "claude-3-7-sonnet-latest"
+MAX_TOKENS = 1000
+
 @dataclass
 class MCPServerConfig:
     """Configuration for an MCP server"""
     name: str
-    command: str
+    command: Optional[str] = None
     args: Optional[List[str]] = None
     env: Optional[Dict[str, str]] = None
+    url: Optional[str] = None
+    transport: str = "stdio"  # "stdio" or "sse"
     description: str = ""
 
 @dataclass
@@ -128,9 +133,12 @@ class MCPManager:
         session = self.sessions[server_name]
         
         try:
+            # Use official MCP SDK to call tool
             result = await session.call_tool(tool_name, arguments)
             
+            # Extract result content
             if result.content and len(result.content) > 0:
+                # Return the first content item's text
                 return result.content[0].text
             else:
                 return str(result)
@@ -145,6 +153,7 @@ class MCPManager:
         
         for server_name, tools in self.available_tools.items():
             for tool in tools:
+                # Convert MCP Tool to Anthropic format
                 anthropic_tool = {
                     "name": f"{server_name}__{tool.name}",
                     "description": f"[{server_name}] {tool.description or tool.name}",
@@ -165,7 +174,7 @@ class MCPManager:
     async def cleanup(self):
         """Cleanup all MCP connections"""
         try:
-            await self.exit_stack.close()
+            await self.exit_stack.aclose()
             logger.info("All MCP servers disconnected")
         except Exception as e:
             logger.error(f"Error during MCP cleanup: {e}")
@@ -227,6 +236,7 @@ class ClaudeChatbot:
     
     def _prepare_messages_for_api(self) -> List[Dict[str, Any]]:
         """Prepare conversation history for Claude API"""
+        # Keep only the last N messages to maintain context window
         recent_messages = self.conversation_history[-self.max_context_messages:]
         
         api_messages = []
@@ -244,11 +254,12 @@ class ClaudeChatbot:
         tool_results = []
         
         for content_block in message.content:
-            print(content_block)
             if content_block.type == "tool_use":
                 tool_name = content_block.name
                 arguments = content_block.input
                 tool_use_id = content_block.id
+                
+                logger.info(f"Executing tool: {tool_name} with args: {arguments}")
                 
                 # Parse server name from tool name
                 if "__" in tool_name:
@@ -258,13 +269,15 @@ class ClaudeChatbot:
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": tool_use_id,
-                        "content": "Error: Invalid tool name format"
+                        "content": "Error: Invalid tool name format. Expected format: server__tool_name"
                     })
                     continue
                 
                 try:
                     # Call tool using MCP SDK
                     result = await self.mcp_manager.call_tool(server_name, actual_tool_name, arguments)
+                    
+                    logger.info(f"Tool {tool_name} completed successfully")
                     
                     tool_results.append({
                         "type": "tool_result",
@@ -273,16 +286,17 @@ class ClaudeChatbot:
                     })
                     
                 except Exception as e:
+                    logger.error(f"Tool {tool_name} failed: {e}")
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": tool_use_id,
-                        "content": f"Error: {str(e)}"
+                        "content": f"Error executing {actual_tool_name}: {str(e)}"
                     })
         
         return tool_results
     
     async def send_message_stream(self, user_input: str):
-        """Send a message to Claude and yield streaming response"""
+        """Send a message to Claude and yield streaming response with multi-turn tool support"""
         # Add user message to history
         user_msg = ChatMessage(
             role="user",
@@ -296,70 +310,84 @@ class ClaudeChatbot:
             messages = self._prepare_messages_for_api()
             tools = self.mcp_manager.get_all_tools_for_anthropic()
             
-            # Make streaming API call
-            kwargs = {
-                "model": "claude-3-7-sonnet-latest",
-                "max_tokens": 1000,
-                "messages": messages
-            }
-            
-            if tools:
-                kwargs["tools"] = tools
-            
             assistant_content = ""
-            tool_calls_made = []
+            all_tool_calls = []
             
-            async with self.client.messages.stream(**kwargs) as stream:
-                async for chunk in stream:
-                    if chunk.type == "content_block_delta":
-                        if chunk.delta.type == "text_delta":
-                            text_chunk = chunk.delta.text
-                            assistant_content += text_chunk
-                            yield text_chunk
-                    elif chunk.type == "content_block_start":
-                        if chunk.content_block.type == "tool_use":
-                            tool_calls_made.append({
-                                "id": chunk.content_block.id,
-                                "name": chunk.content_block.name,
-                                "input": chunk.content_block.input
-                            })
-                
-                # Get final message
-                final_message = await stream.get_final_message()
+            # Continue making API calls until we get a final response without tool calls
+            current_messages = messages
             
-            # Handle tool calls if present
-            if final_message.stop_reason == "tool_use":
-                tool_results = await self._handle_tool_calls(final_message)
+            while True:
+                # Make streaming API call
+                kwargs = {
+                    "model": MODEL,
+                    "max_tokens": MAX_TOKENS,
+                    "messages": current_messages
+                }
                 
-                if tool_results:
+                if tools:
+                    kwargs["tools"] = tools
+                
+                current_response_content = ""
+                current_tool_calls = []
+                
+                async with self.client.messages.stream(**kwargs) as stream:
+                    async for chunk in stream:
+                        if chunk.type == "content_block_delta":
+                            if chunk.delta.type == "text_delta":
+                                text_chunk = chunk.delta.text
+                                current_response_content += text_chunk
+                                assistant_content += text_chunk
+                                yield text_chunk
+                        elif chunk.type == "content_block_start":
+                            if chunk.content_block.type == "tool_use":
+                                current_tool_calls.append({
+                                    "id": chunk.content_block.id,
+                                    "name": chunk.content_block.name,
+                                    "input": chunk.content_block.input
+                                })
+                    
+                    # Get final message from this stream
+                    final_message = await stream.get_final_message()
+                
+                # If no tool calls, we're done
+                if final_message.stop_reason != "tool_use":
+                    break
+                
+                # Handle tool calls
+                if current_tool_calls:
+                    all_tool_calls.extend(current_tool_calls)
                     yield "\n\n🔧 Executing tools...\n"
                     
-                    # Prepare messages with tool results
-                    tool_messages = messages + [
-                        {"role": "assistant", "content": final_message.content},
-                        {"role": "user", "content": tool_results}
-                    ]
+                    tool_results = await self._handle_tool_calls(final_message)
                     
-                    # Make follow-up API call with tool results
-                    async with self.client.messages.stream(
-                        model="claude-3-7-sonnet-latest",
-                        max_tokens=1000,
-                        messages=tool_messages,
-                        tools=tools if tools else []
-                    ) as follow_up_stream:
-                        async for chunk in follow_up_stream:
-                            if chunk.type == "content_block_delta":
-                                if chunk.delta.type == "text_delta":
-                                    text_chunk = chunk.delta.text
-                                    assistant_content += text_chunk
-                                    yield text_chunk
+                    if tool_results:
+                        # Add the assistant's message with tool calls to the conversation
+                        current_messages.append({
+                            "role": "assistant", 
+                            "content": final_message.content
+                        })
+                        
+                        # Add the tool results as a user message
+                        current_messages.append({
+                            "role": "user", 
+                            "content": tool_results
+                        })
+                        
+                        # Continue the loop to get Claude's response to the tool results
+                        continue
+                    else:
+                        # No tool results, break the loop
+                        break
+                else:
+                    # No tool calls found but stop reason was tool_use, something went wrong
+                    break
             
             # Add final assistant message to history
             assistant_msg = ChatMessage(
                 role="assistant",
                 content=assistant_content,
                 timestamp=datetime.now(),
-                tool_calls=tool_calls_made if tool_calls_made else None
+                tool_calls=all_tool_calls if all_tool_calls else None
             )
             self.conversation_history.append(assistant_msg)
             
@@ -380,7 +408,7 @@ class ClaudeChatbot:
         """Cleanup resources"""
         await self.mcp_manager.cleanup()
         await self.save_session()
-        await self.client.aclose()
+        await self.client.close()
 
 def load_config() -> Dict[str, Any]:
     """Load configuration from environment and config file"""
@@ -400,9 +428,11 @@ def load_config() -> Dict[str, Any]:
             for server_data in mcp_config.get("servers", []):
                 server = MCPServerConfig(
                     name=server_data["name"],
-                    command=server_data["command"],
+                    command=server_data.get("command"),
                     args=server_data.get("args"),
                     env=server_data.get("env"),
+                    url=server_data.get("url"),
+                    transport=server_data.get("transport", "stdio"),
                     description=server_data.get("description", "")
                 )
                 config["mcp_servers"].append(server)
@@ -511,6 +541,22 @@ async def main():
                         console.print(f"  Assistant messages: [blue]{assistant_messages}[/blue]")
                         console.print(f"  Context window: [yellow]{config['max_context_messages']} messages[/yellow]")
                         console.print(f"  MCP servers: [magenta]{len(available_tools)}[/magenta]\n")
+                        continue
+                    elif command == '/logs':
+                        try:
+                            if Path('mcp_requests.log').exists():
+                                with open('mcp_requests.log', 'r') as f:
+                                    lines = f.readlines()
+                                    # Show last 50 lines
+                                    recent_lines = lines[-50:] if len(lines) > 50 else lines
+                                    
+                                console.print("\n[bold blue]📋 Recent MCP Request Logs (last 50 lines):[/bold blue]")
+                                console.print("[dim]" + "".join(recent_lines) + "[/dim]")
+                                console.print(f"\n[yellow]Full logs available in: mcp_requests.log[/yellow]\n")
+                            else:
+                                console.print("[yellow]No MCP request logs found yet.[/yellow]\n")
+                        except Exception as e:
+                            console.print(f"[red]Error reading logs: {e}[/red]\n")
                         continue
                     elif command == '/logs':
                         try:

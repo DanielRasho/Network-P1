@@ -2,6 +2,7 @@
   "servers": [
     {
       "name": "filesystem",
+      "transport": "stdio",
       "command": "npx",
       "args": [
         "-y",
@@ -14,6 +15,7 @@
     },
     {
       "name": "Git",
+      "transport": "stdio",
       "command": "uvx",
       "args": [
         "mcp-server-git",
@@ -26,6 +28,7 @@
     },
     {
       "name": "GraphCP",
+      "transport": "stdio",
       "command": "/usr/bin/uv",
       "args": [
         "--directory",
